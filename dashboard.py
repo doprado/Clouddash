@@ -140,8 +140,6 @@ st.markdown("---")
 # Configurações na sidebar
 st.sidebar.title("⚙️ Configurações")
 
-
-##https://api.cloudflare.com/client/v4/accounts/7b4661e07bba4890ceb6c5e83981fb36/ai-gateway/gateways/sia-prd/logs
 # Input para URL base (sem parâmetros)
 default_url = ""
 base_url = st.sidebar.text_input(
