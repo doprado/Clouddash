@@ -1,7 +1,7 @@
 FROM python:3.11-slim
 
 # Define diretório de trabalho
-WORKDIR /app
+WORKDIR /code
 
 # Copia arquivos de dependências
 COPY requirements.txt .
