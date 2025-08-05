@@ -136,6 +136,8 @@ def filter_by_date_range(df, date_filter):
         start_date = now_utc - timedelta(days=3)
     elif date_filter == "Últimos 7 dias":
         start_date = now_utc - timedelta(days=7)
+    elif date_filter == "Últimos 14 dias":
+        start_date = now_utc - timedelta(days=14)
     elif date_filter == "Últimos 30 dias":
         start_date = now_utc - timedelta(days=30)
     else:  # "Todos os dados"
