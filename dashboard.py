@@ -5,8 +5,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
+import pytz
 
 # Configuração da página
 st.set_page_config(
@@ -89,6 +90,16 @@ def process_logs_data(logs):
         created_at = log.get('created_at', '')
         provider = log.get('provider', 'Não informado')
         
+        # Converte created_at para datetime
+        try:
+            if created_at:
+                # Remove o 'Z' e converte para datetime UTC
+                created_at_dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            else:
+                created_at_dt = None
+        except:
+            created_at_dt = None
+        
         processed_data.append({
             'email': email,
             'model': model,
@@ -99,12 +110,70 @@ def process_logs_data(logs):
             'duration': duration,
             'success': success,
             'created_at': created_at,
+            'created_at_dt': created_at_dt,
             'provider': provider
         })
     
-    return pd.DataFrame(processed_data)
+    df = pd.DataFrame(processed_data)
+    
+    # Remove registros sem data válida
+    df = df.dropna(subset=['created_at_dt'])
+    
+    return df
+
+def filter_by_date_range(df, date_filter):
+    """Filtra o DataFrame por período de tempo"""
+    if df.empty or 'created_at_dt' not in df.columns:
+        return df
+    
+    # Obtém a data/hora atual em UTC
+    now_utc = datetime.now(pytz.UTC)
+    
+    # Define o período baseado no filtro
+    if date_filter == "Últimas 24 horas":
+        start_date = now_utc - timedelta(hours=24)
+    elif date_filter == "Últimos 3 dias":
+        start_date = now_utc - timedelta(days=3)
+    elif date_filter == "Últimos 7 dias":
+        start_date = now_utc - timedelta(days=7)
+    elif date_filter == "Últimos 30 dias":
+        start_date = now_utc - timedelta(days=30)
+    else:  # "Todos os dados"
+        return df
+    
+    # Filtra os dados
+    filtered_df = df[df['created_at_dt'] >= start_date].copy()
+    
+    return filtered_df
 
 def create_user_summary(df):
+    """Cria resumo por usuário"""
+    user_summary = df.groupby('email').agg({
+        'cost': 'sum',
+        'total_tokens': 'sum',
+        'tokens_in': 'sum',
+        'tokens_out': 'sum',
+        'duration': 'mean',
+        'model': 'count',  # Conta total de requests
+        'success': lambda x: (x == True).sum()  # Conta requests bem-sucedidos
+    }).round(6)
+    
+    user_summary.columns = ['Custo Total', 'Total Tokens', 'Tokens Input', 'Tokens Output', 'Duração Média (ms)', 'Total Requests', 'Requests Sucesso']
+    user_summary['Taxa Sucesso (%)'] = (user_summary['Requests Sucesso'] / user_summary['Total Requests'] * 100).round(2)
+    
+    return user_summary.sort_values('Custo Total', ascending=False)
+
+def create_model_usage_by_user(df):
+    """Cria resumo de uso de modelos por usuário"""
+    model_usage = df.groupby(['email', 'model']).agg({
+        'cost': 'sum',
+        'model': 'count',  # Conta requests
+        'total_tokens': 'sum'
+    }).round(6)
+    
+    model_usage.columns = ['Custo', 'Requests', 'Total Tokens']
+    
+    return model_usage.sort_values(['email', 'Custo'], ascending=[True, False])
     """Cria resumo por usuário"""
     user_summary = df.groupby('email').agg({
         'cost': 'sum',
@@ -189,10 +258,55 @@ if st.sidebar.button("🔄 Carregar Dados", type="primary"):
 
 # Verifica se há dados carregados
 if 'df' in st.session_state:
-    df = st.session_state['df']
+    df_original = st.session_state['df']
     last_update = st.session_state.get('last_update', 'Desconhecido')
     
-    st.info(f"📊 Dados carregados: {len(df)} registros | Última atualização: {last_update}")
+    # Filtros de data
+    st.markdown("## 🗓️ Filtros")
+    
+    col_filter1, col_filter2 = st.columns([2, 1])
+    
+    with col_filter1:
+        # Filtro de período
+        date_options = [
+            "Todos os dados",
+            "Últimas 24 horas", 
+            "Últimos 3 dias",
+            "Últimos 7 dias", 
+            "Últimos 30 dias"
+        ]
+        
+        selected_period = st.selectbox(
+            "📅 Período:",
+            options=date_options,
+            index=0,
+            help="Filtre os dados por período de tempo"
+        )
+    
+    with col_filter2:
+        # Mostra informações do período de dados
+        if not df_original.empty and 'created_at_dt' in df_original.columns:
+            min_date = df_original['created_at_dt'].min()
+            max_date = df_original['created_at_dt'].max()
+            st.info(f"📊 Dados de {min_date.strftime('%d/%m/%Y %H:%M')} até {max_date.strftime('%d/%m/%Y %H:%M')}")
+    
+    # Aplica o filtro de data
+    df = filter_by_date_range(df_original, selected_period)
+    
+    # Mostra informações sobre o filtro aplicado
+    if selected_period != "Todos os dados":
+        filtered_count = len(df)
+        total_count = len(df_original)
+        st.success(f"🎯 Filtro aplicado: **{selected_period}** | Mostrando {filtered_count:,} de {total_count:,} registros")
+    else:
+        st.info(f"📊 Dados carregados: {len(df):,} registros | Última atualização: {last_update}")
+    
+    # Verifica se ainda há dados após o filtro
+    if df.empty:
+        st.warning("⚠️ Nenhum dado encontrado para o período selecionado.")
+        st.stop()
+    
+    st.markdown("---")
     
     # Métricas gerais
     st.markdown("## 📈 Métricas Gerais")
@@ -249,7 +363,7 @@ if 'df' in st.session_state:
             title="Top 10 Usuários por Custo Total",
             labels={'email': 'Usuário', 'Custo Total': 'Custo ($)'}
         )
-        fig_cost.update_layout (xaxis_tickangle=45)
+        fig_cost.update_layout(xaxis_tickangle=45)
         st.plotly_chart(fig_cost, use_container_width=True)
     
     with tab2:
@@ -282,7 +396,7 @@ if 'df' in st.session_state:
             title="Top 10 Usuários por Total de Tokens",
             labels={'email': 'Usuário', 'Total Tokens': 'Tokens'}
         )
-        fig_tokens.update_layout (xaxis_tickangle=45)
+        fig_tokens.update_layout(xaxis_tickangle=45)
         st.plotly_chart(fig_tokens, use_container_width=True)
     
     with tab4:
@@ -294,7 +408,7 @@ if 'df' in st.session_state:
             title="Top 10 Usuários por Duração Média de Request",
             labels={'email': 'Usuário', 'Duração Média (ms)': 'Duração (ms)'}
         )
-        fig_duration.update_layout (xaxis_tickangle=45)
+        fig_duration.update_layout(xaxis_tickangle=45)
         st.plotly_chart(fig_duration, use_container_width=True)
     
     # Detalhes por usuário e modelo
